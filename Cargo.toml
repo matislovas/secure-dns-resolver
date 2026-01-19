@@ -1,0 +1,28 @@
+[package]
+name = "secure-dns-resolver"
+version = "0.1.0"
+edition = "2021"
+description = "A CLI utility for DNS-over-HTTPS and DNS-over-TLS resolution"
+
+[dependencies]
+tokio = { version = "1.35", features = ["full"] }
+reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
+clap = { version = "4.4", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rustls = "0.21"
+tokio-rustls = "0.24"
+webpki-roots = "0.25"
+trust-dns-proto = "0.23"
+base64 = "0.21"
+anyhow = "1.0"
+thiserror = "1.0"
+colored = "2.1"
+rand = "0.8"
+
+# HTTP/3 support
+h3 = "0.0.4"
+h3-quinn = "0.0.5"
+quinn = "0.10"
+bytes = "1.5"
+http = "1.0"

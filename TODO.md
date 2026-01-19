@@ -1,0 +1,2 @@
+- Support additional protocols: DoQ
+- [in libnudler]: support passing and resolving subdomain list e.g. api.[rotated_url], pdp.[rotated_url]
