@@ -17,7 +17,7 @@ A fast, secure, and privacy-focused DNS resolution CLI utility written in Rust. 
 
 - **Concurrent Resolution**: Resolves multiple hostnames simultaneously using async Tokio runtime
 
-- **Provider Shuffling**: Randomly select providers per hostname with automatic fallback on failure
+- **Provider Racing**: Send each hostname to all providers. Fastest to respond - wins
 
 - **ECH Support**: Fetch Encrypted Client Hello (ECH) configurations from HTTPS/SVCB records
 
@@ -60,8 +60,8 @@ The binary will be located at ./target/debug/secure-dns-resolver
 # Use defaults (Cloudflare, DoH)
 secure-dns-resolver api.nordvpn.com example.com 15min.lt crypto.cloudflare.com
 
-# Use DoH3 (DNS-over-HTTP3) and shuffle between providers (each resolution to randomly selecetd provider)
-secure-dns-resolver --shuffle -P doh3 api.nordvpn.com example.com 15min.lt google.com crypto.cloudflare.com
+# Use DoH3 (DNS-over-HTTP3) and race between providers (first provider to respond - wins)
+secure-dns-resolver --race -P doh3 api.nordvpn.com example.com 15min.lt google.com crypto.cloudflare.com
 
 # Use DoT (DNS-over-TLS) and google's DNS
 secure-dns-resolver -p google -P dot api.nordvpn.com example.com 15min.lt google.com crypto.cloudflare.com

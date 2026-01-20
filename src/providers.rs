@@ -2,7 +2,7 @@ use crate::Provider;
 
 #[derive(Debug, Clone)]
 pub struct DnsProviderConfig {
-    pub _name: &'static str,
+    pub name: &'static str,
     // DoH (HTTP/2) settings
     pub doh_url: &'static str,
     // DoT settings
@@ -20,60 +20,62 @@ impl DnsProviderConfig {
     pub fn from_provider(provider: &Provider) -> Self {
         match provider {
             Provider::Cloudflare => DnsProviderConfig {
-                _name: "Cloudflare",
-                // DoH
+                name: "Cloudflare",
                 doh_url: "https://cloudflare-dns.com/dns-query",
-                // DoT
                 dot_host: "1.1.1.1",
                 dot_port: 853,
                 dot_hostname: "cloudflare-dns.com",
-                // DoH3
                 doh3_url: "https://cloudflare-dns.com/dns-query",
                 doh3_host: "1.1.1.1",
                 doh3_port: 443,
                 doh3_hostname: "cloudflare-dns.com",
             },
             Provider::Google => DnsProviderConfig {
-                _name: "Google",
-                // DoH
+                name: "Google",
                 doh_url: "https://dns.google/dns-query",
-                // DoT
                 dot_host: "8.8.8.8",
                 dot_port: 853,
                 dot_hostname: "dns.google",
-                // DoH3
                 doh3_url: "https://dns.google/dns-query",
                 doh3_host: "8.8.8.8",
                 doh3_port: 443,
                 doh3_hostname: "dns.google",
             },
             Provider::Quad9 => DnsProviderConfig {
-                _name: "Quad9",
-                // DoH
+                name: "Quad9",
                 doh_url: "https://dns.quad9.net/dns-query",
-                // DoT
                 dot_host: "9.9.9.9",
                 dot_port: 853,
                 dot_hostname: "dns.quad9.net",
-                // DoH3
                 doh3_url: "https://dns.quad9.net/dns-query",
                 doh3_host: "9.9.9.9",
                 doh3_port: 443,
                 doh3_hostname: "dns.quad9.net",
             },
             Provider::NextDns => DnsProviderConfig {
-                _name: "NextDNS",
-                // DoH
+                name: "NextDNS",
                 doh_url: "https://dns.nextdns.io/dns-query",
-                // DoT
                 dot_host: "45.90.28.0",
                 dot_port: 853,
                 dot_hostname: "dns.nextdns.io",
-                // DoH3
                 doh3_url: "https://dns.nextdns.io/dns-query",
                 doh3_host: "45.90.28.0",
                 doh3_port: 443,
                 doh3_hostname: "dns.nextdns.io",
+            },
+            Provider::Nord => DnsProviderConfig {
+                name: "Nordsec",
+
+                doh_url: "https://dns1.nordvpn.com/dns-query",
+
+                dot_host: "103.86.99.112",
+                dot_port: 853,
+                dot_hostname: "dns1.nordvpn.com",
+
+                doh3_url: "https://dns1.nordvpn.com/dns-query",
+                doh3_host: "103.86.99.112",
+                doh3_port: 443,
+                doh3_hostname: "dns1.nordvpn.com",
             },
         }
     }

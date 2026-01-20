@@ -1,9 +1,9 @@
-mod providers;
 mod doh;
 mod doh3;
 mod dot;
-mod resolver;
 mod ech;
+mod providers;
+mod resolver;
 
 use clap::{Parser, ValueEnum};
 use colored::*;
@@ -26,6 +26,7 @@ pub enum Provider {
     Google,
     Quad9,
     NextDns,
+    Nord,
 }
 
 impl Provider {
@@ -35,6 +36,7 @@ impl Provider {
             Provider::Google,
             Provider::Quad9,
             Provider::NextDns,
+            Provider::Nord,
         ]
     }
 }
@@ -64,12 +66,26 @@ impl RecordType {
             RecordType::SVCB => 64,
         }
     }
+
+    pub fn from_code(code: u16) -> &'static str {
+        match code {
+            1 => "A",
+            28 => "AAAA",
+            5 => "CNAME",
+            15 => "MX",
+            16 => "TXT",
+            2 => "NS",
+            65 => "HTTPS",
+            64 => "SVCB",
+            _ => "UNKNOWN",
+        }
+    }
 }
 
 #[derive(Parser, Debug)]
 #[command(name = "secure-dns-resolver")]
 #[command(about = "A CLI utility for DNS-over-HTTPS, DNS-over-TLS, and DNS-over-HTTP/3 resolution")]
-#[command(version = "0.1.0")]
+#[command(version = "0.2.0")]
 struct Args {
     /// Hostnames to resolve (space-separated)
     #[arg(required = true)]
@@ -87,7 +103,7 @@ struct Args {
     #[arg(short = 't', long, value_enum, default_value = "a")]
     record_type: RecordType,
 
-    /// Show detailed output
+    /// Show detailed output including all requests and responses
     #[arg(short, long)]
     verbose: bool,
 
@@ -99,39 +115,55 @@ struct Args {
     #[arg(short, long)]
     ech: bool,
 
-    /// Shuffle providers: randomly pick a provider for each hostname, retry with others on failure
+    /// Race mode: query all providers simultaneously, use fastest response
     #[arg(short, long)]
-    shuffle: bool,
+    race: bool,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    
+
     println!("{}", "═".repeat(60).cyan());
     println!("{}", "  Secure DNS Resolver".bold().cyan());
     println!("{}", "═".repeat(60).cyan());
-    
+
+    if args.verbose {
+        println!("{}", "  [verbose] Verbose mode enabled".dimmed());
+        println!(
+            "{}",
+            format!("  [verbose] Protocol: {:?}", args.protocol).dimmed()
+        );
+        println!(
+            "{}",
+            format!("  [verbose] Record type: {:?}", args.record_type).dimmed()
+        );
+        println!(
+            "{}",
+            format!("  [verbose] Hostnames: {:?}", args.hostnames).dimmed()
+        );
+    }
+
     let start = Instant::now();
-    
+
     let resolver = DnsResolver::new();
 
-    // Shuffle mode: random provider per hostname with fallback
-    if args.shuffle {
+    // Race mode: query all providers, use fastest response
+    if args.race {
         println!(
             "\n{} {} via {:?}",
             "▶ Mode:".green().bold(),
-            "Shuffle (random provider per hostname with fallback)".cyan(),
+            "Race (all providers, fastest wins)".cyan(),
             args.protocol
         );
         println!("{}", "─".repeat(50).dimmed());
 
-        // ECH resolution with shuffle
+        // ECH resolution with race
         if args.ech {
             println!("{}", "  Fetching ECH Configs...".cyan());
-            
+
             let ech_results = resolver
-                .resolve_batch_shuffle_raw(
+                .resolve_batch_race_raw(
                     &args.hostnames,
                     &args.protocol,
                     65, // HTTPS record type
@@ -141,30 +173,30 @@ async fn main() -> anyhow::Result<()> {
 
             for (hostname, result) in args.hostnames.iter().zip(ech_results.iter()) {
                 match result {
-                    Ok((raw_data, provider)) => {
-                        match ech::parse_ech_config(raw_data) {
-                            Some(ech_configs) => {
-                                println!(
-                                    "  {} {} [via {:?}] ECH Config:",
-                                    "✓".green().bold(),
-                                    hostname.yellow(),
-                                    provider,
-                                );
-                                for config in ech_configs {
-                                    println!("    {}", config.white());
-                                }
-                            }
-                            None => {
-                                println!(
-                                    "  {} {} [via {:?}] → {}",
-                                    "○".blue(),
-                                    hostname.yellow(),
-                                    provider,
-                                    "No ECH config found in HTTPS record".dimmed()
-                                );
+                    Ok((raw_data, provider, elapsed)) => match ech::parse_ech_config(raw_data) {
+                        Some(ech_configs) => {
+                            println!(
+                                "  {} {} [via {:?} in {:.2?}] ECH Config:",
+                                "✓".green().bold(),
+                                hostname.yellow(),
+                                provider,
+                                elapsed,
+                            );
+                            for config in ech_configs {
+                                println!("    {}", config.white());
                             }
                         }
-                    }
+                        None => {
+                            println!(
+                                "  {} {} [via {:?} in {:.2?}] → {}",
+                                "○".blue(),
+                                hostname.yellow(),
+                                provider,
+                                elapsed,
+                                "No ECH config found in HTTPS record".dimmed()
+                            );
+                        }
+                    },
                     Err(e) => {
                         println!(
                             "  {} {} → {}",
@@ -178,9 +210,9 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", "─".repeat(50).dimmed());
         }
 
-        // Regular record resolution with shuffle
+        // Regular record resolution with race
         let results = resolver
-            .resolve_batch_shuffle(
+            .resolve_batch_race(
                 &args.hostnames,
                 &args.protocol,
                 &args.record_type,
@@ -193,12 +225,13 @@ async fn main() -> anyhow::Result<()> {
 
         for (hostname, result) in args.hostnames.iter().zip(results.iter()) {
             match result {
-                Ok((addresses, provider)) => {
+                Ok((addresses, provider, elapsed)) => {
                     println!(
-                        "  {} {} [via {:?}] → {}",
+                        "  {} {} [via {:?} in {:.2?}] → {}",
                         "✓".green().bold(),
                         hostname.yellow(),
                         provider,
+                        elapsed,
                         addresses.join(", ").white()
                     );
                 }
@@ -232,40 +265,39 @@ async fn main() -> anyhow::Result<()> {
             // ECH resolution
             if args.ech {
                 println!("{}", "  Fetching ECH Configs...".cyan());
-                
+
                 let ech_results = resolver
                     .resolve_batch_raw(
                         &args.hostnames,
                         provider,
                         &args.protocol,
                         65, // HTTPS record type
+                        args.verbose,
                     )
                     .await;
 
                 for (hostname, result) in args.hostnames.iter().zip(ech_results.iter()) {
                     match result {
-                        Ok(raw_data) => {
-                            match ech::parse_ech_config(raw_data) {
-                                Some(ech_configs) => {
-                                    println!(
-                                        "  {} {} ECH Config:",
-                                        "✓".green().bold(),
-                                        hostname.yellow(),
-                                    );
-                                    for config in ech_configs {
-                                        println!("    {}", config.white());
-                                    }
-                                }
-                                None => {
-                                    println!(
-                                        "  {} {} → {}",
-                                        "○".blue(),
-                                        hostname.yellow(),
-                                        "No ECH config found in HTTPS record".dimmed()
-                                    );
+                        Ok(raw_data) => match ech::parse_ech_config(raw_data) {
+                            Some(ech_configs) => {
+                                println!(
+                                    "  {} {} ECH Config:",
+                                    "✓".green().bold(),
+                                    hostname.yellow(),
+                                );
+                                for config in ech_configs {
+                                    println!("    {}", config.white());
                                 }
                             }
-                        }
+                            None => {
+                                println!(
+                                    "  {} {} → {}",
+                                    "○".blue(),
+                                    hostname.yellow(),
+                                    "No ECH config found in HTTPS record".dimmed()
+                                );
+                            }
+                        },
                         Err(e) => {
                             println!(
                                 "  {} {} → {}",
@@ -279,13 +311,14 @@ async fn main() -> anyhow::Result<()> {
                 println!("{}", "─".repeat(50).dimmed());
             }
 
-            // Regular record resolution
+            // Regular record resolution - all hostnames sent concurrently
             let results = resolver
                 .resolve_batch(
                     &args.hostnames,
                     provider,
                     &args.protocol,
                     &args.record_type,
+                    args.verbose,
                 )
                 .await;
 
@@ -317,11 +350,7 @@ async fn main() -> anyhow::Result<()> {
 
     let elapsed = start.elapsed();
     println!("\n{}", "═".repeat(60).cyan());
-    println!(
-        "{} {:.2?}",
-        "Total time:".dimmed(),
-        elapsed
-    );
-    
+    println!("{} {:.2?}", "Total time:".dimmed(), elapsed);
+
     Ok(())
 }
