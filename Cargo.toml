@@ -2,12 +2,24 @@
 name = "secure-dns-resolver"
 version = "0.2.0"
 edition = "2021"
-description = "A CLI utility for DNS-over-HTTPS, DNS-over-TLS, and DNS-over-HTTP/3 resolution"
+description = "A library and CLI utility for DNS-over-HTTPS, DNS-over-TLS, and DNS-over-HTTP/3 resolution"
+license = "MIT"
+repository = "https://github.com/yourusername/secure-dns-resolver"
+keywords = ["dns", "doh", "dot", "doh3", "resolver"]
+categories = ["network-programming", "command-line-utilities"]
+
+[lib]
+name = "secure_dns_resolver"
+path = "src/lib.rs"
+
+[[bin]]
+name = "secure-dns-resolver"
+path = "src/bin/main.rs"
 
 [dependencies]
 tokio = { version = "1.35", features = ["full"] }
 reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
-clap = { version = "4.4", features = ["derive"] }
+clap = { version = "4.4", features = ["derive"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 rustls = "0.21"
@@ -17,7 +29,7 @@ trust-dns-proto = "0.23"
 base64 = "0.21"
 anyhow = "1.0"
 thiserror = "1.0"
-colored = "2.1"
+colored = { version = "2.1", optional = true }
 rand = "0.8"
 
 # HTTP/3 support
@@ -29,3 +41,10 @@ http = "1.0"
 
 # For racing futures
 futures = "0.3"
+
+[features]
+default = ["cli"]
+cli = ["clap", "colored"]
+
+[dev-dependencies]
+tokio-test = "0.4"

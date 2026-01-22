@@ -1,22 +1,30 @@
 use crate::Provider;
 
+/// Configuration for a DNS provider
 #[derive(Debug, Clone)]
 pub struct DnsProviderConfig {
+    /// Human-readable name of the provider
     pub name: &'static str,
-    // DoH (HTTP/2) settings
+    /// DoH (HTTP/2) endpoint URL
     pub doh_url: &'static str,
-    // DoT settings
+    /// DoT server IP address
     pub dot_host: &'static str,
+    /// DoT server port (typically 853)
     pub dot_port: u16,
+    /// DoT server hostname for TLS verification
     pub dot_hostname: &'static str,
-    // DoH3 (HTTP/3) settings
+    /// DoH3 (HTTP/3) endpoint URL
     pub doh3_url: &'static str,
+    /// DoH3 server IP address
     pub doh3_host: &'static str,
+    /// DoH3 server port (typically 443)
     pub doh3_port: u16,
+    /// DoH3 server hostname for TLS verification
     pub doh3_hostname: &'static str,
 }
 
 impl DnsProviderConfig {
+    /// Get the configuration for a specific provider
     pub fn from_provider(provider: &Provider) -> Self {
         match provider {
             Provider::Cloudflare => DnsProviderConfig {
@@ -62,20 +70,6 @@ impl DnsProviderConfig {
                 doh3_host: "45.90.28.0",
                 doh3_port: 443,
                 doh3_hostname: "dns.nextdns.io",
-            },
-            Provider::Nord => DnsProviderConfig {
-                name: "Nordsec",
-
-                doh_url: "https://dns1.nordvpn.com/dns-query",
-
-                dot_host: "103.86.99.112",
-                dot_port: 853,
-                dot_hostname: "dns1.nordvpn.com",
-
-                doh3_url: "https://dns1.nordvpn.com/dns-query",
-                doh3_host: "103.86.99.112",
-                doh3_port: 443,
-                doh3_hostname: "dns1.nordvpn.com",
             },
         }
     }

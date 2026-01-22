@@ -10,13 +10,43 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
 
+/// The main DNS resolver that supports multiple protocols and providers
+/// 
+/// # Example
+/// 
+/// ```rust,no_run
+/// use secure_dns_resolver::{DnsResolver, Provider, Protocol, RecordType};
+/// 
+/// #[tokio::main]
+/// async fn main() -> anyhow::Result<()> {
+///     let resolver = DnsResolver::new();
+///     
+///     let result = resolver.resolve(
+///         "example.com",
+///         &Provider::Cloudflare,
+///         &Protocol::Doh,
+///         &RecordType::A,
+///         false,
+///     ).await?;
+///     
+///     println!("Resolved: {:?}", result);
+///     Ok(())
+/// }
+/// ```
 pub struct DnsResolver {
     doh: Arc<DohResolver>,
     dot: Arc<DotResolver>,
     doh3: Arc<Doh3Resolver>,
 }
 
+impl Default for DnsResolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DnsResolver {
+    /// Create a new DNS resolver instance
     pub fn new() -> Self {
         Self {
             doh: Arc::new(DohResolver::new()),
@@ -25,7 +55,70 @@ impl DnsResolver {
         }
     }
 
+    /// Resolve a single hostname
+    /// 
+    /// # Arguments
+    /// 
+    /// * `hostname` - The hostname to resolve
+    /// * `provider` - The DNS provider to use
+    /// * `protocol` - The protocol to use (DoH, DoT, or DoH3)
+    /// * `record_type` - The DNS record type to query
+    /// * `verbose` - Whether to print verbose output
+    /// 
+    /// # Returns
+    /// 
+    /// A vector of resolved addresses/records
+    pub async fn resolve(
+        &self,
+        hostname: &str,
+        provider: &Provider,
+        protocol: &Protocol,
+        record_type: &RecordType,
+        verbose: bool,
+    ) -> Result<Vec<String>> {
+        let config = DnsProviderConfig::from_provider(provider);
+        let type_code = record_type.to_type_code();
+
+        match protocol {
+            Protocol::Doh => self.doh.resolve(hostname, &config, type_code, verbose).await,
+            Protocol::Dot => self.dot.resolve(hostname, &config, type_code, verbose).await,
+            Protocol::Doh3 => self.doh3.resolve(hostname, &config, type_code, verbose).await,
+        }
+    }
+
+    /// Resolve a single hostname and return raw RDATA bytes
+    /// 
+    /// This is useful for parsing HTTPS/SVCB records for ECH configs
+    pub async fn resolve_raw(
+        &self,
+        hostname: &str,
+        provider: &Provider,
+        protocol: &Protocol,
+        type_code: u16,
+        verbose: bool,
+    ) -> Result<Vec<u8>> {
+        let config = DnsProviderConfig::from_provider(provider);
+
+        match protocol {
+            Protocol::Doh => self.doh.resolve_raw(hostname, &config, type_code, verbose).await,
+            Protocol::Dot => self.dot.resolve_raw(hostname, &config, type_code, verbose).await,
+            Protocol::Doh3 => self.doh3.resolve_raw(hostname, &config, type_code, verbose).await,
+        }
+    }
+
     /// Resolve all hostnames concurrently using a single provider
+    /// 
+    /// # Arguments
+    /// 
+    /// * `hostnames` - List of hostnames to resolve
+    /// * `provider` - The DNS provider to use
+    /// * `protocol` - The protocol to use
+    /// * `record_type` - The DNS record type to query
+    /// * `verbose` - Whether to print verbose output
+    /// 
+    /// # Returns
+    /// 
+    /// A vector of results, one for each hostname (in the same order)
     pub async fn resolve_batch(
         &self,
         hostnames: &[String],
@@ -39,7 +132,6 @@ impl DnsResolver {
 
         let mut handles: Vec<JoinHandle<Result<Vec<String>>>> = Vec::new();
 
-        // Send all queries concurrently
         for hostname in hostnames {
             let hostname = hostname.clone();
             let config = config.clone();
@@ -59,12 +151,9 @@ impl DnsResolver {
             handles.push(handle);
         }
 
-        // Collect all results
         let mut results = Vec::new();
         for handle in handles {
-            let result = handle
-                .await
-                .unwrap_or_else(|e| Err(anyhow::anyhow!("Task failed: {}", e)));
+            let result = handle.await.unwrap_or_else(|e| Err(anyhow::anyhow!("Task failed: {}", e)));
             results.push(result);
         }
 
@@ -94,18 +183,9 @@ impl DnsResolver {
 
             let handle = tokio::spawn(async move {
                 match protocol {
-                    Protocol::Doh => {
-                        doh.resolve_raw(&hostname, &config, type_code, verbose)
-                            .await
-                    }
-                    Protocol::Dot => {
-                        dot.resolve_raw(&hostname, &config, type_code, verbose)
-                            .await
-                    }
-                    Protocol::Doh3 => {
-                        doh3.resolve_raw(&hostname, &config, type_code, verbose)
-                            .await
-                    }
+                    Protocol::Doh => doh.resolve_raw(&hostname, &config, type_code, verbose).await,
+                    Protocol::Dot => dot.resolve_raw(&hostname, &config, type_code, verbose).await,
+                    Protocol::Doh3 => doh3.resolve_raw(&hostname, &config, type_code, verbose).await,
                 }
             });
 
@@ -114,9 +194,7 @@ impl DnsResolver {
 
         let mut results = Vec::new();
         for handle in handles {
-            let result = handle
-                .await
-                .unwrap_or_else(|e| Err(anyhow::anyhow!("Task failed: {}", e)));
+            let result = handle.await.unwrap_or_else(|e| Err(anyhow::anyhow!("Task failed: {}", e)));
             results.push(result);
         }
 
@@ -124,7 +202,19 @@ impl DnsResolver {
     }
 
     /// Race mode: resolve each hostname by racing all providers simultaneously
-    /// Returns the result from whichever provider responds first
+    /// 
+    /// Queries all providers in parallel and returns the fastest successful response.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `hostnames` - List of hostnames to resolve
+    /// * `protocol` - The protocol to use
+    /// * `record_type` - The DNS record type to query
+    /// * `verbose` - Whether to print verbose output
+    /// 
+    /// # Returns
+    /// 
+    /// A vector of results containing (records, winning provider, duration)
     pub async fn resolve_batch_race(
         &self,
         hostnames: &[String],
@@ -144,7 +234,16 @@ impl DnsResolver {
             let protocol = protocol.clone();
 
             let handle = tokio::spawn(async move {
-                Self::race_providers(hostname, doh, dot, doh3, protocol, type_code, verbose).await
+                Self::race_providers(
+                    hostname,
+                    doh,
+                    dot,
+                    doh3,
+                    protocol,
+                    type_code,
+                    verbose,
+                )
+                .await
             });
 
             handles.push(handle);
@@ -179,8 +278,16 @@ impl DnsResolver {
             let protocol = protocol.clone();
 
             let handle = tokio::spawn(async move {
-                Self::race_providers_raw(hostname, doh, dot, doh3, protocol, type_code, verbose)
-                    .await
+                Self::race_providers_raw(
+                    hostname,
+                    doh,
+                    dot,
+                    doh3,
+                    protocol,
+                    type_code,
+                    verbose,
+                )
+                .await
             });
 
             handles.push(handle);
@@ -197,7 +304,26 @@ impl DnsResolver {
         results
     }
 
-    /// Race all providers for a single hostname - first successful response wins
+    /// Race a single hostname across all providers
+    pub async fn resolve_race(
+        &self,
+        hostname: &str,
+        protocol: &Protocol,
+        record_type: &RecordType,
+        verbose: bool,
+    ) -> Result<(Vec<String>, Provider, Duration)> {
+        Self::race_providers(
+            hostname.to_string(),
+            Arc::clone(&self.doh),
+            Arc::clone(&self.dot),
+            Arc::clone(&self.doh3),
+            protocol.clone(),
+            record_type.to_type_code(),
+            verbose,
+        )
+        .await
+    }
+
     async fn race_providers(
         hostname: String,
         doh: Arc<DohResolver>,
@@ -208,24 +334,18 @@ impl DnsResolver {
         verbose: bool,
     ) -> Result<(Vec<String>, Provider, Duration)> {
         let providers = Provider::all();
-
+        
         if verbose {
             eprintln!(
                 "  [verbose] Racing {} providers for {} (type {})",
                 providers.len(),
                 hostname,
-                crate::RecordType::from_code(type_code)
+                RecordType::from_code(type_code)
             );
         }
-
-        type RaceFuture = Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<(Vec<String>, Provider, Duration), anyhow::Error>,
-                    > + Send,
-            >,
-        >;
-
+        
+        type RaceFuture = Pin<Box<dyn std::future::Future<Output = Result<(Vec<String>, Provider, Duration), anyhow::Error>> + Send>>;
+        
         let futures: Vec<RaceFuture> = providers
             .into_iter()
             .map(|provider| {
@@ -235,17 +355,14 @@ impl DnsResolver {
                 let dot = Arc::clone(&dot);
                 let doh3 = Arc::clone(&doh3);
                 let protocol = protocol.clone();
-                let verbose = verbose;
 
                 Box::pin(async move {
                     let start = Instant::now();
-
+                    
                     let result = match protocol {
                         Protocol::Doh => doh.resolve(&hostname, &config, type_code, verbose).await,
                         Protocol::Dot => dot.resolve(&hostname, &config, type_code, verbose).await,
-                        Protocol::Doh3 => {
-                            doh3.resolve(&hostname, &config, type_code, verbose).await
-                        }
+                        Protocol::Doh3 => doh3.resolve(&hostname, &config, type_code, verbose).await,
                     };
 
                     let elapsed = start.elapsed();
@@ -255,14 +372,11 @@ impl DnsResolver {
                             if verbose {
                                 eprintln!(
                                     "  [verbose] ✓ {:?} responded for {} in {:.2?} with {} records",
-                                    provider,
-                                    hostname,
-                                    elapsed,
-                                    addresses.len()
+                                    provider, hostname, elapsed, addresses.len()
                                 );
                             }
                             Ok((addresses, provider, elapsed))
-                        }
+                        },
                         Err(e) => {
                             if verbose {
                                 eprintln!(
@@ -281,7 +395,6 @@ impl DnsResolver {
             return Err(anyhow::anyhow!("No providers available"));
         }
 
-        // Race all providers - first success wins
         match select_ok(futures).await {
             Ok((result, _remaining)) => {
                 if verbose {
@@ -291,12 +404,11 @@ impl DnsResolver {
                     );
                 }
                 Ok(result)
-            }
+            },
             Err(e) => Err(anyhow::anyhow!("All providers failed: {}", e)),
         }
     }
 
-    /// Race all providers for raw data (ECH)
     async fn race_providers_raw(
         hostname: String,
         doh: Arc<DohResolver>,
@@ -307,79 +419,62 @@ impl DnsResolver {
         verbose: bool,
     ) -> Result<(Vec<u8>, Provider, Duration)> {
         let providers = Provider::all();
-
+        
         if verbose {
             eprintln!(
                 "  [verbose] Racing {} providers for {} (type {}, raw)",
                 providers.len(),
                 hostname,
-                crate::RecordType::from_code(type_code)
+                RecordType::from_code(type_code)
             );
         }
+        
+        type RaceFuture = Pin<Box<dyn std::future::Future<Output = Result<(Vec<u8>, Provider, Duration), anyhow::Error>> + Send>>;
+        
+        let futures: Vec<RaceFuture> = providers
+            .into_iter()
+            .map(|provider| {
+                let hostname = hostname.clone();
+                let config = DnsProviderConfig::from_provider(&provider);
+                let doh = Arc::clone(&doh);
+                let dot = Arc::clone(&dot);
+                let doh3 = Arc::clone(&doh3);
+                let protocol = protocol.clone();
 
-        type RaceFuture = Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<(Vec<u8>, Provider, Duration), anyhow::Error>,
-                    > + Send,
-            >,
-        >;
+                Box::pin(async move {
+                    let start = Instant::now();
+                    
+                    let result = match protocol {
+                        Protocol::Doh => doh.resolve_raw(&hostname, &config, type_code, verbose).await,
+                        Protocol::Dot => dot.resolve_raw(&hostname, &config, type_code, verbose).await,
+                        Protocol::Doh3 => doh3.resolve_raw(&hostname, &config, type_code, verbose).await,
+                    };
 
-        let futures: Vec<RaceFuture> =
-            providers
-                .into_iter()
-                .map(|provider| {
-                    let hostname = hostname.clone();
-                    let config = DnsProviderConfig::from_provider(&provider);
-                    let doh = Arc::clone(&doh);
-                    let dot = Arc::clone(&dot);
-                    let doh3 = Arc::clone(&doh3);
-                    let protocol = protocol.clone();
-                    let verbose = verbose;
+                    let elapsed = start.elapsed();
 
-                    Box::pin(async move {
-                        let start = Instant::now();
-
-                        let result = match protocol {
-                            Protocol::Doh => {
-                                doh.resolve_raw(&hostname, &config, type_code, verbose)
-                                    .await
-                            }
-                            Protocol::Dot => {
-                                dot.resolve_raw(&hostname, &config, type_code, verbose)
-                                    .await
-                            }
-                            Protocol::Doh3 => {
-                                doh3.resolve_raw(&hostname, &config, type_code, verbose)
-                                    .await
-                            }
-                        };
-
-                        let elapsed = start.elapsed();
-
-                        match result {
-                            Ok(data) => {
-                                if verbose {
-                                    eprintln!(
+                    match result {
+                        Ok(data) => {
+                            if verbose {
+                                eprintln!(
                                     "  [verbose] ✓ {:?} responded for {} in {:.2?} with {} bytes",
                                     provider, hostname, elapsed, data.len()
                                 );
-                                }
-                                Ok((data, provider, elapsed))
                             }
-                            Err(e) => {
-                                if verbose {
-                                    eprintln!(
-                                        "  [verbose] ✗ {:?} failed for {} in {:.2?}: {}",
-                                        provider, hostname, elapsed, e
-                                    );
-                                }
-                                Err(e)
+                            Ok((data, provider, elapsed))
+                        },
+                        Err(e) => {
+                            if verbose {
+                                eprintln!(
+                                    "  [verbose] ✗ {:?} failed for {} in {:.2?}: {}",
+                                    provider, hostname, elapsed, e
+                                );
                             }
+                            Err(e)
                         }
-                    }) as RaceFuture
-                })
-                .collect();
+                    }
+                }) as RaceFuture
+            })
+            .collect();
 
         if futures.is_empty() {
             return Err(anyhow::anyhow!("No providers available"));
@@ -394,7 +489,7 @@ impl DnsResolver {
                     );
                 }
                 Ok(result)
-            }
+            },
             Err(e) => Err(anyhow::anyhow!("All providers failed: {}", e)),
         }
     }
